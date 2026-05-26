@@ -126,6 +126,21 @@ test_bash_pipeline_failure() {
     assert_eq "$(json_get "$f" exitCode)" "5" "exitCode via PIPESTATUS" || return 1
 }
 
+test_wrap_stores_writer_pid() {
+    # Regression: wrap mode used to store the child's PID. The reaper then
+    # raced with the final write the instant the child exited, marking
+    # successful jobs as `failed -1`. The fix stores track's own PID.
+    "$TRACK" wrap-pid -- sh -c 'sleep 0.4' &
+    local track_pid=$!
+    sleep 0.1
+    local f; f="$(job_file)"
+    [ -n "$f" ] || { echo "    no job file written"; return 1; }
+    assert_eq "$(json_get "$f" pid)" "$track_pid" "stored pid is track's pid" || return 1
+    wait "$track_pid"
+    assert_eq "$(json_get "$f" state)" "completed" "final state" || return 1
+    assert_eq "$(json_get "$f" exitCode)" "0" "final exitCode" || return 1
+}
+
 test_attach_completion() {
     sleep 0.5 &
     local pid=$!
@@ -164,14 +179,15 @@ echo "$(bold "track integration tests")"
 echo "binary: $TRACK"
 echo
 
-run_test "wrap success"          test_wrap_success
-run_test "wrap failure"          test_wrap_failure
-run_test "begin/end success"     test_begin_end_success
-run_test "begin/end failure"     test_begin_end_failure
-run_test "zsh pipeline failure"  test_zsh_pipeline_failure
-run_test "bash pipeline failure" test_bash_pipeline_failure
-run_test "attach completion"     test_attach_completion
-run_test "attach interrupted"    test_attach_interrupted
+run_test "wrap success"           test_wrap_success
+run_test "wrap failure"           test_wrap_failure
+run_test "wrap stores writer pid" test_wrap_stores_writer_pid
+run_test "begin/end success"      test_begin_end_success
+run_test "begin/end failure"      test_begin_end_failure
+run_test "zsh pipeline failure"   test_zsh_pipeline_failure
+run_test "bash pipeline failure"  test_bash_pipeline_failure
+run_test "attach completion"      test_attach_completion
+run_test "attach interrupted"     test_attach_interrupted
 
 echo
 if [ "$failed" -eq 0 ]; then

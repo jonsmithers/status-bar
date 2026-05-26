@@ -140,7 +140,10 @@ func runAttach(_ args: [String]) {
         command: "attached to pid \(pid)",
         state: .running,
         startedAt: Date(),
-        pid: pid
+        // See wrap-mode comment — store track's own PID (the writer), not the
+        // target PID. The target dying is exactly what we're observing, so
+        // using it for orphan detection would race with the "completed" write.
+        pid: getpid()
     )
     try? JobStore.write(job)
 
@@ -197,7 +200,11 @@ func runWrap(_ args: [String]) {
         name: name,
         command: cmdParts.joined(separator: " "),
         state: .running,
-        startedAt: Date()
+        startedAt: Date(),
+        // Store track's own PID — the writer. The orphan reaper checks this
+        // to detect a dead writer, NOT the child's PID. Using the child here
+        // races with the final "completed" write the instant the child exits.
+        pid: getpid()
     )
     try? JobStore.write(job)
 
@@ -205,8 +212,6 @@ func runWrap(_ args: [String]) {
 
     do {
         try process.run()
-        job.pid = process.processIdentifier
-        try? JobStore.write(job)
     } catch {
         job.state = .failed
         job.endedAt = Date()

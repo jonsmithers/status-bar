@@ -39,15 +39,19 @@ struct Job: Codable {
 }
 ```
 
-### `pid` semantics by origin
+### `pid` semantics — the writer, not the subject
 
-| Source             | What `pid` stores                | Why                                            |
-| ------------------ | -------------------------------- | ---------------------------------------------- |
-| `track <n> -- ...` | the child command's PID          | track is its parent; used for kill / introspection |
-| `track begin`      | the calling shell's PID (PPID)   | so we can reap the job if the shell dies       |
-| `track attach`     | the attached PID                 | the thing we're waiting on                     |
+`pid` always stores the PID of **the process responsible for finalizing this job's JSON file** — i.e., the writer. The reaper's check "if `state == running` and `kill(pid, 0) == ESRCH`, mark failed" is correct only under this invariant.
 
-The reaping logic in the menu bar app doesn't need to distinguish — in all cases, if `state == .running` and the stored PID is gone, the job is dead.
+| Source             | What `pid` stores            | Why                                                         |
+| ------------------ | ---------------------------- | ----------------------------------------------------------- |
+| `track <n> -- ...` | track's own PID              | track owns the lifecycle; it writes the final state         |
+| `track attach`     | track's own PID              | the kqueue watcher owns the lifecycle; the target's PID is the subject, not the writer |
+| `track begin`      | the calling shell's PID (PPID) | `status_end` runs in the shell; if the shell dies, no finalize |
+
+Why this matters — earlier versions stored the *child's* PID in wrap mode and the *target's* PID in attach mode. That created a race: the instant the child exited, its PID became invalid in the kernel; if the menu app's 1s poll happened to fire in the few-ms window before track wrote the final `completed`, the reaper would write `failed -1` over a successful job. Using the writer's PID closes that window entirely: as long as track is alive, the job stays in `running`; once track has exited, the file is already finalized.
+
+The "subject" PID (child / target) isn't stored at all right now. If a future "kill job from menu" feature needs it, add a separate `childPid` field — don't repurpose this one.
 
 ## On-disk format
 
